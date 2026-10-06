@@ -62,6 +62,7 @@ video.rev{width:100%;border-radius:16px;background:#000;margin-top:6px}
     <label>คะแนนรวมการประเมินอาการปวด (0–20)</label>
     <input id="score" type="number" inputmode="decimal" min="0" max="20" step="0.5" placeholder="เช่น 8">
     <p class="hint">ระบบจะนำคะแนนรวมมาหารด้วย 5 เป็นค่าเฉลี่ย</p>
+    <p class="hint"><a href="https://form.jotform.com/262780362083054" target="_blank" rel="noopener" style="color:var(--deep)">📝 เปิดแบบประเมินก่อนทำกิจกรรม (Jotform)</a> แล้วนำคะแนนรวมมากรอกที่นี่</p>
     <p id="e1" class="bad"></p>
     <div class="center"><button onclick="goAssess()">ถัดไป ➜</button></div>
     <div class="adminLink"><a onclick="openAdminLogin()">สำหรับผู้ดูแลระบบ (Admin)</a></div>
@@ -105,6 +106,17 @@ video.rev{width:100%;border-radius:16px;background:#000;margin-top:6px}
     </div>
   </section>
 
+  <!-- ประเมินหลังทำกิจกรรม -->
+  <section id="pPost" class="card center hidden">
+    <div style="font-size:60px">🌿</div>
+    <h2>ประเมินอาการปวดหลังทำกิจกรรม</h2>
+    <p class="hint">ใช้ข้อคำถามเดียวกับแบบประเมินก่อนทำกิจกรรม ให้คะแนน 0 (ไม่มีอาการ) – 4 (มากที่สุด)</p>
+    <div id="postQs"></div>
+    <p id="postSum" style="font-weight:600"></p>
+    <p id="ePost" class="bad"></p>
+    <button onclick="submitPost()">บันทึกและเสร็จสิ้น ✔</button>
+  </section>
+
   <!-- เสร็จสิ้น -->
   <section id="p4" class="card center hidden">
     <div style="font-size:70px">🎉</div>
@@ -112,6 +124,7 @@ video.rev{width:100%;border-radius:16px;background:#000;margin-top:6px}
     <p id="doneTime" style="font-size:20px"></p>
     <p id="doneWin"></p>
     <p id="doneDays"></p>
+    <p id="doneChange" style="font-weight:600"></p>
     <p class="hint">อย่าลืมทำต่อเนื่อง 3–4 วัน<br>วันละ 2 ช่วง: 12:00–13:00 และ 17:00–18:00</p>
     <button onclick="resetAll()">กลับหน้าแรก</button>
   </section>
@@ -119,7 +132,7 @@ video.rev{width:100%;border-radius:16px;background:#000;margin-top:6px}
   <!-- Admin login -->
   <section id="pAL" class="card hidden">
     <h2>เข้าสู่ระบบผู้ดูแล</h2>
-    <label>รหัสผ่าน Admin</label><input id="apw" type="password">
+    <label>รหัสผ่าน Admin</label><input id="apw" type="text" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" placeholder="พิมพ์รหัสผ่าน">
     <p id="eA" class="bad"></p>
     <div class="row"><button class="ghost" onclick="show('p1')">ยกเลิก</button><button onclick="adminLogin()">เข้าสู่ระบบ</button></div>
   </section>
@@ -137,12 +150,17 @@ video.rev{width:100%;border-radius:16px;background:#000;margin-top:6px}
       <p class="hint">เห็นเฉพาะข้อมูลที่บันทึกบนเครื่อง/เบราว์เซอร์นี้</p>
       <div style="overflow-x:auto"><table id="adminTable"></table></div>
     </div>
+    <div class="card">
+      <h2>แนวโน้มความปวดรายคน</h2>
+      <select id="trendSel" onchange="drawTrend()"></select>
+      <div id="trend" style="margin-top:12px"></div>
+    </div>
     <div id="detail" class="card hidden"></div>
   </section>
 </div>
 
 <script>
-const ADMIN_PASSWORD = "admin12345"; // ← เปลี่ยนรหัสผ่านผู้ดูแลตรงนี้
+const ADMIN_PASSWORD = "admin1234"; // ← เปลี่ยนรหัสผ่านผู้ดูแลตรงนี้
 
 const LEVELS = [
  {n:0,label:"ไม่มีอาการ",color:"#ffffff",face:"bigsmile",
@@ -179,8 +197,10 @@ const getRec=(s,k)=>tx(s,"readonly",st=>st.get(k));
 
 // ---------- state ----------
 const $=id=>document.getElementById(id);
+window.addEventListener("error",e=>{const c=document.getElementById("camErr");if(c)c.textContent="ข้อผิดพลาด: "+e.message;});
+window.addEventListener("unhandledrejection",e=>{const c=document.getElementById("camErr");if(c)c.textContent="ข้อผิดพลาด: "+(e.reason&&e.reason.message||e.reason);});
 let S={name:"",no:"",score:0,avg:0,level:0}, poseIdx=0, stream=null, facing="user", mirrored=true, filterCss="none", recorder=null, chunks=[], pending=[], busy=false;
-const PAGES=["p1","p2","p3","p4","pAL","pAD"];
+const PAGES=["p1","p2","p3","pPost","p4","pAL","pAD"];
 function show(id){PAGES.forEach(p=>$(p).classList.toggle("hidden",p!==id));if(id!=="p3")stopCam();window.scrollTo(0,0);}
 function levelOf(a){return a<=0.80?0:a<=1.60?1:a<=2.40?2:a<=3.20?3:4;}
 const fmtDT=d=>new Date(d).toLocaleString("th-TH",{dateStyle:"long",timeStyle:"medium"});
@@ -232,32 +252,62 @@ function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 async function startPose(){
   if(busy)return;
   if(!stream){await startCam();if(!stream)return;}
-  busy=true;$("goBtn").disabled=true;
-  for(let c=3;c>0;c--){$("timer").textContent=c;await sleep(1000);}
-  const sec=LEVELS[S.level].ex[poseIdx][1];
-  let mime="";for(const m of["video/mp4","video/webm;codecs=vp9","video/webm"]){if(window.MediaRecorder&&MediaRecorder.isTypeSupported(m)){mime=m;break;}}
-  chunks=[];
-  try{recorder=new MediaRecorder(stream,mime?{mimeType:mime}:undefined);}catch(e){recorder=null;}
-  if(recorder){recorder.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data);};recorder.start(1000);$("rec").style.display="block";}
-  else $("camErr").textContent="อุปกรณ์นี้ไม่รองรับการบันทึกวิดีโอ";
-  for(let t=sec;t>0;t--){$("timer").textContent=t;await sleep(1000);}
-  $("timer").textContent="✓";$("rec").style.display="none";
-  const blob=await new Promise(res=>{if(!recorder){res(null);return;}recorder.onstop=()=>res(new Blob(chunks,{type:recorder.mimeType||mime||"video/mp4"}));recorder.stop();});
+  busy=true;$("goBtn").disabled=true;$("camErr").textContent="";
+  let blob=null;
+  try{
+    for(let c=3;c>0;c--){$("timer").textContent=c;await sleep(1000);}
+    const sec=LEVELS[S.level].ex[poseIdx][1];
+    let mime="";
+    try{for(const m of["video/mp4","video/webm;codecs=vp9","video/webm"]){if(window.MediaRecorder&&MediaRecorder.isTypeSupported(m)){mime=m;break;}}}catch(e){}
+    chunks=[];recorder=null;
+    try{
+      recorder=new MediaRecorder(stream,mime?{mimeType:mime}:undefined);
+      recorder.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data);};
+      recorder.start(1000);$("rec").style.display="block";
+    }catch(e){recorder=null;$("camErr").textContent="บันทึกวิดีโอไม่ได้บนเครื่องนี้ แต่ยังทำกิจกรรมต่อได้";}
+    for(let t=sec;t>0;t--){$("timer").textContent=t;await sleep(1000);}
+    $("timer").textContent="✓";$("rec").style.display="none";
+    if(recorder){
+      blob=await new Promise(res=>{
+        const done=()=>res(chunks.length?new Blob(chunks,{type:recorder.mimeType||mime||"video/mp4"}):null);
+        recorder.onstop=done;
+        try{if(recorder.state!=="inactive")recorder.stop();else done();}catch(e){done();}
+        setTimeout(done,3000);
+      });
+    }
+  }catch(e){$("camErr").textContent="เกิดข้อผิดพลาด: "+(e&&e.message||e)+" (ข้ามไปท่าถัดไป)";}
   pending.push({pose:poseIdx+1,blob,mime:blob&&blob.type});
   busy=false;
   if(poseIdx<2){poseIdx++;await sleep(600);renderPose();}
-  else finish();
+  else{postAns=[null,null,null,null,null];renderPostQs();$("ePost").textContent="";show("pPost");}
 }
-async function finish(){
+const QS=["ขณะก้มคอ รู้สึกปวดหรือตึงบริเวณคอ","รู้สึกเมื่อยคอ หรือล้าบริเวณหลังคออยู่ในท่าเดิมเป็นเวลานาน","รู้สึกปวดหรือตึงคอเมื่อเคลื่อนไหวคอ เช่น ก้ม เงย หรือหันคอ","รู้สึกว่าความไม่สบายคอรบกวนการเรียนหรือการทำกิจกรรม","โดยรวม ขณะนี้ (หลังทำกิจกรรม) ท่านรู้สึกไม่สบายหรือปวดบริเวณคอ"];
+const OPTS=["ไม่มีอาการ","เล็กน้อย","ปานกลาง","มาก","มากที่สุด"];
+let postAns=[null,null,null,null,null];
+function renderPostQs(){
+  $("postQs").innerHTML=QS.map((q,i)=>`<div style="text-align:left;margin:14px 0"><div style="font-weight:500">${i+1}. ${q}</div><div class="chips">${OPTS.map((o,k)=>`<div class="chip ${postAns[i]===k?'on':''}" onclick="pickAns(${i},${k})">${o} (${k})</div>`).join("")}</div></div>`).join("");
+  const n=postAns.filter(a=>a!==null).length,sum=postAns.reduce((a,b)=>a+(b||0),0);
+  $("postSum").textContent=n===5?`คะแนนรวม ${sum}/20 • ค่าเฉลี่ย ${(sum/5).toFixed(2)}`:`ตอบแล้ว ${n}/5 ข้อ`;
+}
+function pickAns(i,k){postAns[i]=k;renderPostQs();}
+async function submitPost(){
+  if(postAns.some(a=>a===null)){$("ePost").textContent="กรุณาตอบให้ครบทั้ง 5 ข้อ";return;}
+  const v=postAns.reduce((a,b)=>a+b,0);
+  $("ePost").textContent="กำลังบันทึก...";
+  try{await finish(v,postAns.slice());}catch(e){$("ePost").textContent="บันทึกไม่สำเร็จ: "+(e&&e.message||e)+" (กดอีกครั้งเพื่อลองใหม่)";}
+}
+async function finish(post,ans){
   const now=new Date(),dateKey=now.toISOString().slice(0,10).replace(/-/g,"")&&now.toLocaleDateString("sv-SE");
-  const rec={name:S.name,no:S.no,score:S.score,avg:S.avg,level:S.level,time:now.getTime(),date:dateKey,window:windowOf(now),onTime:windowOf(now)!=="นอกช่วงเวลาที่กำหนด",review:"",note:""};
+  const rec={name:S.name,no:S.no,score:S.score,avg:S.avg,level:S.level,time:now.getTime(),date:dateKey,window:windowOf(now),onTime:windowOf(now)!=="นอกช่วงเวลาที่กำหนด",review:"",note:"",post:post,postAvg:post/5,postLevel:levelOf(post/5),postAnswers:ans};
   const sid=await addRec("sessions",rec);
-  for(const p of pending){if(p.blob)await addRec("videos",{sid,pose:p.pose,blob:p.blob,mime:p.mime});}
+  for(const p of pending){if(p.blob){try{await addRec("videos",{sid,pose:p.pose,blob:p.blob,mime:p.mime});}catch(e){console.warn("save video failed",e);}}}
   const all=(await allRec("sessions")).filter(s=>s.name===S.name&&s.no===S.no);
   const days=new Set(all.map(s=>s.date)).size;
   $("doneTime").textContent="บันทึกเวลา: "+fmtDT(now);
   $("doneWin").innerHTML=rec.onTime?"✅ "+rec.window:"⚠️ ทำนอกช่วงเวลาที่กำหนด (12:00–13:00 / 17:00–18:00)";
   $("doneDays").textContent=`ทำแล้วสะสม ${days} วัน (เป้าหมาย 3–4 วัน)`;
+  const diff=rec.avg-rec.postAvg;
+  $("doneChange").textContent=`ค่าเฉลี่ยความปวด ก่อน ${rec.avg.toFixed(2)} → หลัง ${rec.postAvg.toFixed(2)} `+(diff>0?"(ลดลง 👏)":diff<0?"(เพิ่มขึ้น)":"(เท่าเดิม)");
   show("p4");
 }
 function resetAll(){["name","no","score"].forEach(i=>$(i).value="");show("p1");}
@@ -265,14 +315,39 @@ function resetAll(){["name","no","score"].forEach(i=>$(i).value="");show("p1");}
 // ---------- admin ----------
 let adminOK=false;
 function openAdminLogin(){$("apw").value="";$("eA").textContent="";show("pAL");}
-function adminLogin(){if($("apw").value===ADMIN_PASSWORD){adminOK=true;show("pAD");renderAdmin();}else $("eA").textContent="รหัสผ่านไม่ถูกต้อง";}
+function adminLogin(){if($("apw").value.trim().toLowerCase()===String(ADMIN_PASSWORD).trim().toLowerCase()){adminOK=true;show("pAD");renderAdmin();}else $("eA").textContent="รหัสผ่านไม่ถูกต้อง";}
 function logoutAdmin(){adminOK=false;$("detail").classList.add("hidden");show("p1");}
 async function renderAdmin(){
   if(!adminOK)return;
   const rows=(await allRec("sessions")).sort((a,b)=>b.time-a.time);
+  fillTrend(rows);
   const days={};rows.forEach(r=>{const k=r.name+"|"+r.no;(days[k]=days[k]||new Set()).add(r.date);});
-  $("adminTable").innerHTML=`<tr><th>เวลาที่ทำ</th><th>ชื่อ</th><th>เลขที่</th><th>ระดับ</th><th>ช่วงเวลา</th><th>วันสะสม</th><th>ผลตรวจ</th><th></th></tr>`+
-   (rows.length?rows.map(r=>`<tr><td>${fmtDT(r.time)}</td><td>${esc(r.name)}</td><td>${esc(r.no)}</td><td>${r.level} (${r.avg.toFixed(2)})</td><td class="${r.onTime?'ok':'bad'}">${r.onTime?r.window:'นอกเวลา'}</td><td>${days[r.name+"|"+r.no].size}</td><td>${r.review==="ok"?'<span class="ok">ถูกต้อง</span>':r.review==="bad"?'<span class="bad">ต้องแก้ไข</span>':'-'}</td><td><button class="sm" onclick="openDetail(${r.id})">ดูวิดีโอ</button></td></tr>`).join(""):`<tr><td colspan="8" class="center">ยังไม่มีข้อมูล</td></tr>`);
+  $("adminTable").innerHTML=`<tr><th>เวลาที่ทำ</th><th>ชื่อ</th><th>เลขที่</th><th>ระดับ ก่อน→หลัง</th><th>ช่วงเวลา</th><th>วันสะสม</th><th>ผลตรวจ</th><th></th></tr>`+
+   (rows.length?rows.map(r=>`<tr><td>${fmtDT(r.time)}</td><td>${esc(r.name)}</td><td>${esc(r.no)}</td><td>${r.level} (${r.avg.toFixed(2)})${r.post!=null?' → '+r.postLevel+' ('+r.postAvg.toFixed(2)+')':''}</td><td class="${r.onTime?'ok':'bad'}">${r.onTime?r.window:'นอกเวลา'}</td><td>${days[r.name+"|"+r.no].size}</td><td>${r.review==="ok"?'<span class="ok">ถูกต้อง</span>':r.review==="bad"?'<span class="bad">ต้องแก้ไข</span>':'-'}</td><td><button class="sm" onclick="openDetail(${r.id})">ดูวิดีโอ</button></td></tr>`).join(""):`<tr><td colspan="8" class="center">ยังไม่มีข้อมูล</td></tr>`);
+}
+let ALLROWS=[];
+function fillTrend(rows){
+  ALLROWS=rows;
+  const keys=[...new Set(rows.map(r=>r.name+"|"+r.no))];
+  const sel=$("trendSel"),cur=sel.value;
+  sel.innerHTML=keys.length?keys.map(k=>{const [n,no]=k.split("|");return `<option value="${esc(k)}">${esc(n)} (เลขที่ ${esc(no)})</option>`;}).join(""):'<option value="">ยังไม่มีข้อมูล</option>';
+  if(keys.includes(cur))sel.value=cur;
+  drawTrend();
+}
+function drawTrend(){
+  const k=$("trendSel").value,box=$("trend");
+  const rs=ALLROWS.filter(r=>r.name+"|"+r.no===k).sort((a,b)=>a.time-b.time);
+  if(!rs.length){box.innerHTML="";return;}
+  const W=700,H=260,pl=44,pr=16,pt=16,pb=56,n=rs.length;
+  const x=i=>pl+(n===1?(W-pl-pr)/2:i*(W-pl-pr)/(n-1)),y=v=>pt+(4-v)*(H-pt-pb)/4;
+  let s=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">`;
+  for(let v=0;v<=4;v++)s+=`<line x1="${pl}" x2="${W-pr}" y1="${y(v)}" y2="${y(v)}" stroke="#d8f3ea"/><text x="${pl-8}" y="${y(v)+4}" text-anchor="end" font-size="12" fill="#25524b">${v}</text>`;
+  const line=(key,color)=>{const pts=rs.map((r,i)=>r[key]!=null?[x(i),y(r[key])]:null).filter(Boolean);
+    return (pts.length>1?`<polyline fill="none" stroke="${color}" stroke-width="3" points="${pts.map(p=>p.join(",")).join(" ")}"/>`:"")+pts.map(p=>`<circle cx="${p[0]}" cy="${p[1]}" r="5" fill="${color}"/>`).join("");};
+  s+=line("avg","#2a9d8f")+line("postAvg","#f28c28");
+  rs.forEach((r,i)=>{const d=new Date(r.time);s+=`<text x="${x(i)}" y="${H-30}" text-anchor="middle" font-size="11" fill="#25524b">${d.getDate()}/${d.getMonth()+1}</text><text x="${x(i)}" y="${H-16}" text-anchor="middle" font-size="11" fill="#25524b">${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}</text>`;});
+  s+=`</svg><p class="hint"><span style="color:#2a9d8f">●</span> ก่อนทำกิจกรรม &nbsp; <span style="color:#f28c28">●</span> หลังทำกิจกรรม (ค่าเฉลี่ย 0–4)</p>`;
+  box.innerHTML=s;
 }
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 async function openDetail(id){
@@ -280,7 +355,7 @@ async function openDetail(id){
   const vids=(await allRec("videos")).filter(v=>v.sid===id).sort((a,b)=>a.pose-b.pose);
   const L=LEVELS[r.level];
   const d=$("detail");d.classList.remove("hidden");
-  d.innerHTML=`<h2>${esc(r.name)} (เลขที่ ${esc(r.no)}) • ระดับ ${r.level}</h2><p>${fmtDT(r.time)} — ${r.window}</p>`+
+  d.innerHTML=`<h2>${esc(r.name)} (เลขที่ ${esc(r.no)}) • ระดับ ${r.level}</h2><p>${fmtDT(r.time)} — ${r.window}</p>${r.postAnswers?'<p class="hint">คำตอบหลังทำกิจกรรม ข้อ 1–5: '+r.postAnswers.join(", ")+'</p>':''}`+
    vids.map(v=>`<h3 style="margin:14px 0 4px">ท่าที่ ${v.pose}</h3><p class="hint" style="margin:0">${L.ex[v.pose-1][0]}</p><video class="rev" controls playsinline src="${URL.createObjectURL(v.blob)}"></video>`).join("")||"<p>ไม่มีวิดีโอ</p>";
   d.innerHTML+=`<label>หมายเหตุ</label><textarea id="note" rows="2">${esc(r.note||"")}</textarea>
    <div class="row" style="margin-top:12px"><button onclick="setReview(${id},'ok')">✔ ท่าถูกต้อง</button><button class="danger" onclick="setReview(${id},'bad')">✖ ต้องแก้ไข</button><button class="ghost" onclick="delSession(${id})">🗑 ลบ</button></div>`;
@@ -292,8 +367,8 @@ async function delSession(id){if(!confirm("ลบข้อมูลรายก�
   await delRec("sessions",id);$("detail").classList.add("hidden");renderAdmin();}
 async function exportCSV(){
   const rows=await allRec("sessions");
-  const h=["เวลา","ชื่อ","เลขที่","คะแนนรวม","ค่าเฉลี่ย","ระดับ","ช่วงเวลา","ผลตรวจ","หมายเหตุ"];
-  const lines=[h.join(",")].concat(rows.map(r=>[fmtDT(r.time),r.name,r.no,r.score,r.avg.toFixed(2),r.level,r.window,r.review||"",r.note||""].map(x=>`"${String(x).replace(/"/g,'""')}"`).join(",")));
+  const h=["เวลา","ชื่อ","เลขที่","คะแนนรวมก่อน","ค่าเฉลี่ยก่อน","ระดับก่อน","คะแนนรวมหลัง","ค่าเฉลี่ยหลัง","ระดับหลัง","หลังข้อ1","หลังข้อ2","หลังข้อ3","หลังข้อ4","หลังข้อ5","ช่วงเวลา","ผลตรวจ","หมายเหตุ"];
+  const lines=[h.join(",")].concat(rows.map(r=>[fmtDT(r.time),r.name,r.no,r.score,r.avg.toFixed(2),r.level,r.post??"",r.postAvg!=null?r.postAvg.toFixed(2):"",r.postLevel??"",...(r.postAnswers||["","","","",""]),r.window,r.review||"",r.note||""].map(x=>`"${String(x).replace(/"/g,'""')}"`).join(",")));
   const a=document.createElement("a");a.href=URL.createObjectURL(new Blob(["\ufeff"+lines.join("\n")],{type:"text/csv"}));a.download="physio-nurse.csv";a.click();
 }
 </script>
